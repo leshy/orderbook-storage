@@ -27,7 +27,7 @@ enum State {
 }
 
 type Logger = {
-  log: (data: string) => void
+  log: (data: string, ...extras: Array<any>) => void
 }
 
 type InitClient = {
@@ -43,6 +43,19 @@ type ConnectedClient = {
   ws: WebSocket
 }
 
+type DisconnectedClient = {
+  url: string
+  logger: Logger
+  state: State.Disconnected
+}
+
+type ErroredClient = {
+  url: string
+  logger: Logger
+  state: State.Error
+  ws: WebSocket
+}
+
 type Topic<T> = Observable<T>
 
 type SubscribedClient = {
@@ -55,26 +68,59 @@ type SubscribedClient = {
 
 // random meaningful state categories for functions
 type OpenClient = SubscribedClient | ConnectedClient
-type ClosedClient = InitClient
+type ClosedClient = InitClient | DisconnectedClient | ErroredClient
 
 const connect = (initClient: InitClient): Promise<ConnectedClient> => new Promise((resolve) => {
+  initClient.logger.log('connecting client')
   const ws = new WebSocket(initClient.url)
   ws.on('open', () => resolve({ ...initClient, state: State.Connected, ws }))
 })
 
-async function send(client: OpenClient, data: any) {
+const disconnect = async (client: OpenClient | ErroredClient): Promise<DisconnectedClient> => {
+  client.logger.log('disconnecting client')
+  client.ws.close()
+  return { state: State.Disconnected, url: client.url, logger: client.logger }
+}
+
+const restart = async (client: ClosedClient): Promise<InitClient> => {
+  client.logger.log('restarting client')
+  return { state: State.Init, url: client.url, logger: client.logger }
+}
+
+async function send(client: OpenClient, data: Json) {
+  client.logger.log('sending message', data)
   return client.ws.send(JSON.stringify(data))
 }
 
+// intelligently traverses client states looking for an open one
 async function ensureOpenClient(client: ClosedClient | OpenClient): Promise<OpenClient> {
+  if (client.state === State.Disconnected) {
+    return ensureOpenClient(await restart(client))
+  }
+
+  if (client.state === State.Error) {
+    return ensureOpenClient(await disconnect(client))
+  }
+
   if (client.state === State.Init) {
     return connect(client)
-  } else {
-    return Promise.resolve(client)
   }
+
+  return Promise.resolve(client)
 }
 
-async function subscribe(client: OpenClient, topicName: string): Promise<[SubscribedClient, Topic<Json>]> {
+async function ensureInitClient(client:  OpenClient | InitClient): Promise<OpenClient> {
+  if (client.state === State.Init) {
+    return connect(client)
+  }
+  return Promise.resolve(client)
+}
+
+const autoOpen = (f: Function) => (client: ClosedClient | OpenClient, ...args: Array<any>) => ensureOpenClient(client).then((openClient) => f.apply(global, [openClient, ...args]))
+const autoInit = (f: Function) => (client: InitClient | OpenClient, ...args: Array<any>) => ensureInitClient(client).then((openClient) => f.apply(global, [openClient, ...args]))
+
+const subscribe = autoInit(async (client: OpenClient, topicName: string): Promise<[SubscribedClient, Topic<Json>]> => {
+
   const parseJson = (data: any) => {
     try {
       return JSON.parse(data)
@@ -107,9 +153,9 @@ async function subscribe(client: OpenClient, topicName: string): Promise<[Subscr
   }
   // @ts-ignore
   return [subscribedClient, topic]
-}
+})
 
-async function subscribeWithSchema<T extends Object>(client: OpenClient, topicName: string, schema: any): Promise<[SubscribedClient, Topic<T>]> {
+const subscribeWithSchema = async <T extends Object>(client: OpenClient | InitClient, topicName: string, schema: any): Promise<[SubscribedClient, Topic<T>]> => {
   const [subscribedClient, topic] = await subscribe(client, topicName)
   const validate = ajv.compile(schema)
   return [subscribedClient, (topic.pipe(filter((data) => validate(data))) as unknown as Topic<T>)]
@@ -123,7 +169,7 @@ type OrderBookData = {
 
 type OrderBook = Topic<OrderBookData>
 
-async function orderBook(client: OpenClient, currency: string): Promise<[SubscribedClient, OrderBook]> {
+const orderBook = async (client: OpenClient | InitClient, currency: string): Promise<[SubscribedClient, OrderBook]> => {
 
   const [subscribedClient, topic] = await subscribeWithSchema(client, 'order_book_' + currency, {
     type: 'object',
@@ -165,9 +211,8 @@ async function orderBook(client: OpenClient, currency: string): Promise<[Subscri
 }
 
 const init = async () => {
-  const logger = { log: (data: string) => console.log(data) }
-  const connectedClient = await connect({ state: State.Init, logger, url: 'wss://ws.bitstamp.net' })
-  const [_, orderbook] = await orderBook(connectedClient, 'btceur')
+  const logger = { log: (data: string, ...extras: Array<any>) => console.log(data, ...extras) }
+  const [_, orderbook] = await orderBook({ state: State.Init, logger, url: 'wss://ws.bitstamp.net' }, 'btceur')
   orderbook.subscribe((value: OrderBookData) => console.log(inspect(value, { depth: 8, colors: true })))
 }
 
