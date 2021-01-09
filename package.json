@@ -1,0 +1,45 @@
+{
+  "version": "0.1.0",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "typings": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "start": "tsdx watch",
+    "build": "tsdx build",
+    "test": "tsdx test",
+    "lint": "tsdx lint",
+    "prepare": "tsdx build"
+  },
+  "peerDependencies": {},
+  "husky": {
+    "hooks": {
+      "pre-commit": "tsdx lint"
+    }
+  },
+  "prettier": {
+    "printWidth": 80,
+    "semi": true,
+    "singleQuote": true,
+    "trailingComma": "es5"
+  },
+  "name": "storage",
+  "author": "Ivan Nikolic",
+  "module": "dist/storage.esm.js",
+  "devDependencies": {
+    "@types/ajv": "^1.0.0",
+    "@types/jest": "^26.0.20",
+    "@types/ws": "^7.4.0",
+    "husky": "^4.3.7",
+    "tsdx": "^0.14.1",
+    "tslib": "^2.1.0",
+    "typescript": "^4.1.3"
+  },
+  "dependencies": {
+    "ajv": "^7.0.3",
+    "rxjs": "^6.6.3",
+    "ws": "^7.4.2"
+  }
+}
